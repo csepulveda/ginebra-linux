@@ -1,7 +1,7 @@
 # Ginebra Linux
 
 ![Ginebra-Linux](./logo.png)
-![Terminal](./terminal.png)
+![Terminal](./terminal.jpg)
 
 ```
        /\_____/\
