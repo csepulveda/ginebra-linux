@@ -1,5 +1,7 @@
 # Ginebra Linux
 
+![Ginebra-Linux](./logo.png)
+
 ```
        /\_____/\
       /  o   o  \      Una distribucion Linux minimalista
