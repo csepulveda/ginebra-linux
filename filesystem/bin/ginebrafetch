@@ -1,0 +1,36 @@
+#!/bin/sh
+KERNEL=$(uname -r)
+ARCH=$(uname -m)
+HOST=$(hostname)
+UPTIME_SEC=$(cut -d. -f1 /proc/uptime)
+UPTIME_MIN=$(expr $UPTIME_SEC / 60)
+UPTIME_HOUR=$(expr $UPTIME_MIN / 60)
+UPTIME_MIN=$(expr $UPTIME_MIN % 60)
+MEM_TOTAL=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+MEM_AVAIL=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
+MEM_USED=$(expr $MEM_TOTAL - $MEM_AVAIL)
+CPU=$(awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo)
+if [ -z "$CPU" ]; then
+CPU=$(awk -F': ' '/cpu model/ {print $2; exit}' /proc/cpuinfo)
+fi
+if [ -z "$CPU" ]; then
+CPU="i486"
+fi
+PROCS=$(ls -d /proc/[0-9]* 2>/dev/null | wc -l)
+SHELL_NAME=$(basename $SHELL 2>/dev/null)
+if [ -z "$SHELL_NAME" ]; then
+SHELL_NAME="sh"
+fi
+cat << EOF
+        /\\_____/\\
+       /  o   o  \\      $HOST
+      ( ==  ^  == )     -----------
+       )         (      OS: Ginebra Linux
+      (           )     Kernel: $KERNEL
+     ( (  )   (  ) )    Arch: $ARCH
+    (__(__)___(__)__)   CPU: $CPU
+                        Uptime: ${UPTIME_HOUR}h ${UPTIME_MIN}m
+        ~ meow ~        Memory: ${MEM_USED}MB / ${MEM_TOTAL}MB
+                        Procs: $PROCS
+                        Shell: $SHELL_NAME
+EOF

@@ -1,0 +1,68 @@
+#!/bin/sh
+# bali - Ginebra Linux Package Manager
+
+VERSION="0.1"
+DEFAULT_IP="192.168.100.149"
+DEFAULT_PORT="8080"
+
+echo "                            " 
+echo " ,-----.          ,--.,--.  " 
+echo " |  |) /_  ,--,--.|  |`--'  " 
+echo " |  .-.  \' ,-.  ||  |,--.  " 
+echo " |  '--' /\ '-'  ||  ||  |  " 
+echo " `------'  `--`--'`--'`--'  "
+echo ""
+echo " Ginebra Linux Package Manager v$VERSION"
+echo ""
+
+printf "Server IP [$DEFAULT_IP]: "
+read IP
+IP=${IP:-$DEFAULT_IP}
+
+printf "Server Port [$DEFAULT_PORT]: "
+read PORT
+PORT=${PORT:-$DEFAULT_PORT}
+
+URL="http://${IP}:${PORT}"
+
+echo ""
+echo "Fetching package list..."
+echo ""
+
+PACKAGES=$(wget -q -O - "$URL/list.txt")
+
+if [ -z "$PACKAGES" ]; then
+    echo "Error: Could not fetch package list"
+    exit 1
+fi
+
+echo "Available packages:"
+echo "-------------------"
+echo "$PACKAGES" | while read pkg; do
+    echo "  - $pkg"
+done
+echo ""
+echo "  (a = install all, q = quit)"
+echo ""
+
+printf "Packages to install: "
+read SELECTION
+
+[ "$SELECTION" = "q" ] && exit 0
+[ "$SELECTION" = "a" ] && SELECTION="$PACKAGES"
+
+echo ""
+for pkg in $SELECTION; do
+    echo "[+] Installing $pkg..."
+    wget -q -O "/usr/bin/$pkg" "${URL}/${pkg}"
+    if [ $? -eq 0 ]; then
+        chmod +x "/usr/bin/$pkg"
+        echo "    OK"
+    else
+        echo "    FAILED"
+        rm -f "/usr/bin/$pkg"
+    fi
+done
+
+echo ""
+echo "Done!"

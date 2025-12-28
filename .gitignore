@@ -1,9 +1,5 @@
 linux/*
 busybox-1_36_1/*
-filesystem/bin/*
-filesystem/usr/*
-filesystem/usr/bin/*
-filesystem/sbin/*
 filesystem/lib/*
 i486-linux-musl-cross/*
 
