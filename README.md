@@ -58,8 +58,10 @@ ginebra-linux/
 ├── repo/                    # Precompiled binaries and build scripts
 │   ├── bash                 # GNU Bash static binary
 │   ├── links                # Links browser static binary
+│   ├── htop                 # htop static binary
 │   ├── build-bash.sh        # Script to build bash
-│   └── build-links.sh       # Script to build links
+│   ├── build-links.sh       # Script to build links
+│   └── build-htop.sh        # Script to build htop
 ├── bzImage                  # Compiled kernel
 ├── floppy1-boot.img         # Boot floppy image
 ├── floppy2-rootfs.img       # Rootfs floppy image
@@ -528,6 +530,7 @@ Static binaries compiled for i486 are available for download. Once Ginebra Linux
 |--------|------|-------------|
 | [bash](./repo/bash) | ~1080KB | GNU Bash with readline and history |
 | [links](./repo/links) | ~1380KB | Text-based web browser (no SSL) |
+| [htop](./repo/htop) | ~300KB | Interactive process viewer (ncurses embedded) |
 
 
 
@@ -539,14 +542,19 @@ ifconfig eth0 10.0.2.15 netmask 255.255.255.0
 route add default gw 10.0.2.2
 
 # Download bash
-wget http://your-server/binaries/bash
+wget http://your-server/repo/bash
 chmod +x bash
 ./bash
 
 # Download links
-wget http://your-server/binaries/links
+wget http://your-server/repo/links
 chmod +x links
 ./links http://example.com
+
+# Download htop
+wget http://your-server/repo/htop
+chmod +x htop
+TERM=linux ./htop
 ```
 
 ### Quick Install Script
@@ -554,14 +562,16 @@ chmod +x links
 ```bash
 # Download and install to /bin
 cd /tmp
-wget http://your-server/binaries/bash
-wget http://your-server/binaries/links
-chmod +x bash links
-mv bash links /bin/
+wget http://your-server/repo/bash
+wget http://your-server/repo/links
+wget http://your-server/repo/htop
+chmod +x bash links htop
+mv bash links htop /bin/
 
 # Now you can use them directly
 bash
 links http://example.com
+TERM=linux htop
 ```
 
 ### Using Bash as Default Shell
