@@ -1,6 +1,7 @@
 # Ginebra Linux
 
 ![Ginebra-Linux](./logo.png)
+![Terminal](./terminal.png)
 
 ```
        /\_____/\
@@ -11,6 +12,8 @@
     ( (  )   (  ) )
    (__(__)___(__)__)
 ```
+
+
 
 **Ginebra Linux** is a fork of [Floppinux](https://github.com/w84death/floppinux) that extends the original concept using **two floppy disks**:
 
@@ -510,6 +513,86 @@ sudo umount /mnt/floppy2
 | Modules | No module support | Extensible |
 | Network | No network | RTL8139 with modules |
 
+## Precompiled Binaries
+
+Static binaries compiled for i486 are available for download. Once Ginebra Linux is running with network access, you can download and run them directly.
+
+### Available Binaries
+
+| Binary | Size | Description |
+|--------|------|-------------|
+| [bash](./binaries/bash) | ~1080KB | GNU Bash with readline and history |
+| [links](./binaries/links) | ~1380KB | Text-based web browser (no SSL) |
+
+
+
+### Installing Binaries from Ginebra Linux
+
+```bash
+# Configure network (if not already done)
+ifconfig eth0 10.0.2.15 netmask 255.255.255.0
+route add default gw 10.0.2.2
+
+# Download bash
+wget http://your-server/binaries/bash
+chmod +x bash
+./bash
+
+# Download links
+wget http://your-server/binaries/links
+chmod +x links
+./links http://example.com
+```
+
+### Quick Install Script
+
+```bash
+# Download and install to /bin
+cd /tmp
+wget http://your-server/binaries/bash
+wget http://your-server/binaries/links
+chmod +x bash links
+mv bash links /bin/
+
+# Now you can use them directly
+bash
+links http://example.com
+```
+
+### Using Bash as Default Shell
+
+To use bash instead of ash (BusyBox shell), edit `/etc/inittab`:
+
+```bash
+# Change this line:
+::askfirst:/bin/sh
+# To:
+::askfirst:/bin/bash
+```
+
+Or set environment variables for history support:
+
+```bash
+export HOME=/home
+export HISTFILE=/home/.bash_history
+export HISTSIZE=100
+```
+
+## Roadmap: Bali Package Manager
+
+**Bali** (named after my other cat) will be a minimal package manager for Ginebra Linux:
+
+- Download and install static binaries over HTTP
+- Simple package index (text file with URLs and checksums)
+- Minimal footprint suitable for floppy-based systems
+
+```bash
+# Future usage (planned)
+bali update                  # Fetch package index
+bali search vim              # Search for packages
+bali install vim             # Download and install
+bali list                    # List installed packages
+```
 
 ## Demo
 [Watch Demo](./demo.mp4)
