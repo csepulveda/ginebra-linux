@@ -505,8 +505,12 @@ sudo umount /mnt/floppy2
 | Disquetes | 1 | 2 |
 | Boot filesystem | FAT12 + initramfs | FAT12 (solo kernel) |
 | Root filesystem | cpio.xz en RAM | ext2 en segundo disquete |
-| Modulos | Limitados | Extensibles |
-| Red | Basica | RTL8139 con modulos |
+| Modulos | Sin soporte a modulos | Extensibles |
+| Red | Sin Red | RTL8139 con modulos |
+
+
+## Demo
+[Ver Demo](./demo.mp4)
 
 ## Creditos
 
