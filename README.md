@@ -55,6 +55,11 @@ ginebra-linux/
 │   ├── lib/modules/         # Kernel modules
 │   └── welcome              # ASCII banner
 ├── i486-linux-musl-cross/   # Cross-compilation toolchain
+├── repo/                    # Precompiled binaries and build scripts
+│   ├── bash                 # GNU Bash static binary
+│   ├── links                # Links browser static binary
+│   ├── build-bash.sh        # Script to build bash
+│   └── build-links.sh       # Script to build links
 ├── bzImage                  # Compiled kernel
 ├── floppy1-boot.img         # Boot floppy image
 ├── floppy2-rootfs.img       # Rootfs floppy image
@@ -521,8 +526,8 @@ Static binaries compiled for i486 are available for download. Once Ginebra Linux
 
 | Binary | Size | Description |
 |--------|------|-------------|
-| [bash](./binaries/bash) | ~1080KB | GNU Bash with readline and history |
-| [links](./binaries/links) | ~1380KB | Text-based web browser (no SSL) |
+| [bash](./repo/bash) | ~1080KB | GNU Bash with readline and history |
+| [links](./repo/links) | ~1380KB | Text-based web browser (no SSL) |
 
 
 
