@@ -6,3 +6,6 @@ filesystem/usr/bin/*
 filesystem/sbin/*
 filesystem/lib/*
 i486-linux-musl-cross/*
+
+
+.DS_Store

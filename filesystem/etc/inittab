@@ -1,5 +1,12 @@
 ::sysinit:/etc/init.d/rc
-::askfirst:/bin/sh
+
+tty1::askfirst:/bin/sh
+tty2::askfirst:/bin/sh
+tty3::askfirst:/bin/sh
+tty4::askfirst:/bin/sh
+tty5::askfirst:/bin/sh
+tty6::askfirst:/bin/sh
+
 ::restart:/sbin/init
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r

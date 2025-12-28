@@ -1,0 +1,11 @@
+#!/bin/sh
+export HOME=/home
+export TERM=linux
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HISTFILE=/home/.bash_history
+export HISTSIZE=100
+
+stty intr ^C
+stty sane
+
+cd /home

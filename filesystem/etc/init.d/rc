@@ -10,30 +10,47 @@ cp -a /bin /sbin /etc /lib /usr /tmp/ 2>/dev/null
 cp /welcome /tmp/ 2>/dev/null
 mkdir -p /tmp/proc /tmp/sys /tmp/dev /tmp/home /tmp/mnt
 
-# Copiar dispositivos
+# Copy devices
 cp -a /dev/* /tmp/dev/
 
-# Pivot a RAM
+# Pivot to RAM
 cd /tmp
 mkdir -p oldroot
 pivot_root . oldroot
 
-# Remontar sistemas virtuales
+# Remount Virtual Fs
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev 2>/dev/null
 
-# Desmontar floppy
-umount /oldroot/sys
-umount /oldroot/proc
-umount /oldroot
-rmdir /oldroot
+# Create virtual terminals (devtmpfs should create them, but just in case)
+mknod -m 620 /dev/tty1 c 4 1 2>/dev/null
+mknod -m 620 /dev/tty2 c 4 2 2>/dev/null
+mknod -m 620 /dev/tty3 c 4 3 2>/dev/null
+mknod -m 620 /dev/tty4 c 4 4 2>/dev/null
+mknod -m 620 /dev/tty5 c 4 5 2>/dev/null
+mknod -m 620 /dev/tty6 c 4 6 2>/dev/null
 
-# Cargar módulos de red
+# Desmontar floppy
+umount /oldroot/sys 2>/dev/null
+umount /oldroot/proc 2>/dev/null
+umount /oldroot/dev 2>/dev/null
+umount /oldroot 2>/dev/null
+rmdir /oldroot 2>/dev/null
+
+# Load Network Card Module
 modprobe 8139too
 
-echo "Ginebra Linux corriendo desde RAM"
+# Configure network
+ifconfig lo 127.0.0.1
+ifconfig eth0 192.168.100.99 netmask 255.255.255.0
+hostname ginebra
+
+# Environment variables (heredadas por los shells)
+export HOME=/home
+export TERM=linux
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+
+echo "Ginebra Linux running from RAM"
 clear
 cat /welcome
-cd /home
-exec /bin/sh
