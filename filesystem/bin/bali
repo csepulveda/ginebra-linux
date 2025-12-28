@@ -5,15 +5,16 @@ VERSION="0.1"
 DEFAULT_IP="192.168.100.149"
 DEFAULT_PORT="8080"
 
-echo "                            " 
-echo " ,-----.          ,--.,--.  " 
-echo " |  |) /_  ,--,--.|  |`--'  " 
-echo " |  .-.  \' ,-.  ||  |,--.  " 
-echo " |  '--' /\ '-'  ||  ||  |  " 
-echo " `------'  `--`--'`--'`--'  "
+cat << 'BANNER'
+,-----.          ,--.,--.
+|  |) /_  ,--,--.|  |`--'
+|  .-.  \' ,-.  ||  |,--.
+|  '--' /\ '-'  ||  ||  |
+`------'  `--`--'`--'`--'
+BANNER
+echo " Package Manager v$VERSION"
 echo ""
-echo " Ginebra Linux Package Manager v$VERSION"
-echo ""
+
 
 printf "Server IP [$DEFAULT_IP]: "
 read IP
