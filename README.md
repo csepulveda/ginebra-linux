@@ -132,6 +132,7 @@ scripts/config --enable CONFIG_BLK_DEV_FD
 scripts/config --enable CONFIG_BLK_DEV_RAM
 scripts/config --set-val CONFIG_BLK_DEV_RAM_COUNT 1
 scripts/config --set-val CONFIG_BLK_DEV_RAM_SIZE 4096
+scripts/config --enable CONFIG_DEVTMPFS
 
 # ============================================
 # SISTEMAS DE ARCHIVOS
@@ -242,7 +243,6 @@ scripts/config --disable CONFIG_CRYPTO
 scripts/config --disable CONFIG_VIRTUALIZATION
 scripts/config --disable CONFIG_HYPERVISOR_GUEST
 scripts/config --disable CONFIG_FW_LOADER
-scripts/config --disable CONFIG_DEVTMPFS
 scripts/config --disable CONFIG_DEBUG_FS
 scripts/config --disable CONFIG_MAGIC_SYSRQ
 scripts/config --disable CONFIG_FTRACE
