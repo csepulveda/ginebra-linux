@@ -228,16 +228,24 @@ FREETYPE_LIBS="-L$INSTALL_DIR/lib -lfreetype -lz" \
     --with-xkb-path=/usr/share/X11/xkb --with-xkb-output=/tmp \
     --with-xkb-bin-directory=/usr/bin \
     --with-default-xkb-rules=evdev --with-default-xkb-model=pc104 --with-default-xkb-layout=us \
-    CFLAGS="-Os -fno-stack-protector -D_GNU_SOURCE -I$INSTALL_DIR/include -I$INSTALL_DIR/include/freetype2 -Wno-error" \
-    LDFLAGS="-static -L$INSTALL_DIR/lib -Wl,--allow-multiple-definition"
+    CFLAGS="-Os -fno-stack-protector -fno-pie -D_GNU_SOURCE -I$INSTALL_DIR/include -I$INSTALL_DIR/include/freetype2 -Wno-error" \
+    LDFLAGS="-static -no-pie -L$INSTALL_DIR/lib -Wl,--allow-multiple-definition"
 
 sed -i 's/^build_libtool_libs=yes/build_libtool_libs=no/; s/^link_all_deplibs=no/link_all_deplibs=yes/' libtool
 
 # Build all (tests may fail but Xfbdev should still be built)
 make -j$(nproc) || true
-cd hw/kdrive/fbdev && make LDFLAGS="-all-static -L$INSTALL_DIR/lib -Wl,--allow-multiple-definition"
+cd hw/kdrive/fbdev && make
 i486-linux-musl-strip Xfbdev
 cp Xfbdev $PKG_DIR/usr/bin/
+
+# Include musl dynamic linker (Xfbdev needs it due to libtool)
+MUSL_LIBC="$FLOPPINUX_DIR/i486-linux-musl-cross/i486-linux-musl/lib/libc.so"
+mkdir -p $PKG_DIR/lib
+cp "$MUSL_LIBC" $PKG_DIR/lib/
+ln -sf libc.so $PKG_DIR/lib/ld-musl-i386.so.1
+echo "Included musl libc.so for dynamic linking"
+
 cd "$BUILD_DIR"
 rm -rf xorg-server-1.12.4
 
@@ -245,7 +253,7 @@ echo "=== Building xkbcomp ==="
 rm -rf xkbcomp-1.4.7 && tar xf xkbcomp-1.4.7.tar.xz
 cd xkbcomp-1.4.7 && update_config
 ./configure --host=i486-linux-musl --prefix=/usr \
-    CFLAGS="-Os -I$INSTALL_DIR/include" LDFLAGS="-static -L$INSTALL_DIR/lib"
+    CFLAGS="-Os -fno-pie -I$INSTALL_DIR/include" LDFLAGS="-static -no-pie -L$INSTALL_DIR/lib"
 make -j$(nproc) LIBS="-lxkbfile -lX11 -lxcb -lXau"
 i486-linux-musl-strip xkbcomp
 cp xkbcomp $PKG_DIR/usr/bin/
