@@ -26,8 +26,10 @@ The system boots from the first floppy, gives you 30 seconds to swap to the seco
 
 - Linux Kernel 6.14.x compiled for i486
 - BusyBox 1.36.1 (static build with musl)
-- Network support (RTL8139 driver)
+- Network support (RTL8139 and NE2K drivers)
 - Loadable kernel modules
+- **Bali package manager** for installing additional software
+- X11 support with Xfbdev (TinyX framebuffer server)
 - System runs 100% from RAM after boot
 - Ideal for retro hardware or virtual machines
 
@@ -55,13 +57,12 @@ ginebra-linux/
 │   ├── lib/modules/         # Kernel modules
 │   └── welcome              # ASCII banner
 ├── i486-linux-musl-cross/   # Cross-compilation toolchain
-├── repo/                    # Precompiled binaries and build scripts
-│   ├── bash                 # GNU Bash static binary
-│   ├── links                # Links browser static binary
-│   ├── htop                 # htop static binary
-│   ├── build-bash.sh        # Script to build bash
-│   ├── build-links.sh       # Script to build links
-│   └── build-htop.sh        # Script to build htop
+├── repo/                    # Package repository
+│   ├── bali                 # Bali package manager script
+│   ├── PACKAGES             # Package index file
+│   ├── build/               # Build directory (sources, objects)
+│   ├── build-*.sh           # Build scripts for each package
+│   └── *.pkg.tar.gz         # Compiled packages
 ├── bzImage                  # Compiled kernel
 ├── floppy1-boot.img         # Boot floppy image
 ├── floppy2-rootfs.img       # Rootfs floppy image
@@ -145,6 +146,7 @@ scripts/config --enable CONFIG_BLK_DEV_RAM
 scripts/config --set-val CONFIG_BLK_DEV_RAM_COUNT 1
 scripts/config --set-val CONFIG_BLK_DEV_RAM_SIZE 4096
 scripts/config --enable CONFIG_DEVTMPFS
+scripts/config --enable CONFIG_DEVTMPFS_MOUNT
 
 # ============================================
 # FILESYSTEMS
@@ -172,6 +174,8 @@ scripts/config --module CONFIG_8139TOO
 scripts/config --enable CONFIG_8139TOO_PIO
 scripts/config --module CONFIG_MII
 scripts/config --module CONFIG_CRC16
+scripts/config --enable CONFIG_NET_VENDOR_8390
+scripts/config --module CONFIG_NE2K_PCI
 
 # ============================================
 # PCI
@@ -182,18 +186,34 @@ scripts/config --enable CONFIG_PCI_BIOS
 scripts/config --enable CONFIG_PCI_DIRECT
 
 # ============================================
-# INPUT / KEYBOARD / CONSOLE
+# INPUT / KEYBOARD / MOUSE
 # ============================================
 scripts/config --enable CONFIG_INPUT
 scripts/config --enable CONFIG_INPUT_KEYBOARD
 scripts/config --enable CONFIG_KEYBOARD_ATKBD
+scripts/config --enable CONFIG_INPUT_MOUSE
+scripts/config --module CONFIG_MOUSE_PS2
+scripts/config --enable CONFIG_INPUT_EVDEV
+scripts/config --enable CONFIG_INPUT_MOUSEDEV
 scripts/config --enable CONFIG_SERIO
 scripts/config --enable CONFIG_SERIO_I8042
 scripts/config --enable CONFIG_SERIO_LIBPS2
+
+# ============================================
+# TTY / CONSOLE / PTY
+# ============================================
 scripts/config --enable CONFIG_TTY
 scripts/config --enable CONFIG_VT
 scripts/config --enable CONFIG_VT_CONSOLE
 scripts/config --enable CONFIG_VGA_CONSOLE
+scripts/config --enable CONFIG_UNIX98_PTYS
+
+# ============================================
+# FRAMEBUFFER (for Xfbdev)
+# ============================================
+scripts/config --enable CONFIG_FB
+scripts/config --enable CONFIG_FB_VESA
+scripts/config --enable CONFIG_FB_SIMPLE
 
 # ============================================
 # EXECUTABLE FORMATS
@@ -207,6 +227,7 @@ scripts/config --enable CONFIG_BINFMT_SCRIPT
 scripts/config --enable CONFIG_EXPERT
 scripts/config --enable CONFIG_PRINTK
 scripts/config --enable CONFIG_POSIX_TIMERS
+scripts/config --enable CONFIG_MULTIUSER
 
 # ============================================
 # EEPROM (required by 8139too)
@@ -224,7 +245,6 @@ scripts/config --enable CONFIG_PERF_EVENTS
 # DISABLE UNNECESSARY FEATURES
 # ============================================
 scripts/config --disable CONFIG_SMP
-scripts/config --disable CONFIG_MULTIUSER
 scripts/config --disable CONFIG_SWAP
 scripts/config --disable CONFIG_BUG
 scripts/config --disable CONFIG_KALLSYMS
@@ -236,7 +256,6 @@ scripts/config --disable CONFIG_EVENTFD
 scripts/config --disable CONFIG_SHMEM
 scripts/config --disable CONFIG_AIO
 scripts/config --disable CONFIG_IO_URING
-scripts/config --disable CONFIG_ADVISE_SYSCALLS
 scripts/config --disable CONFIG_MEMBARRIER
 scripts/config --disable CONFIG_CPU_MITIGATIONS
 scripts/config --disable CONFIG_HIGH_RES_TIMERS
@@ -248,7 +267,6 @@ scripts/config --disable CONFIG_SOUND
 scripts/config --disable CONFIG_SCSI
 scripts/config --disable CONFIG_ATA
 scripts/config --disable CONFIG_DRM
-scripts/config --disable CONFIG_FB
 scripts/config --disable CONFIG_WIRELESS
 scripts/config --disable CONFIG_WLAN
 scripts/config --disable CONFIG_CRYPTO
@@ -259,9 +277,7 @@ scripts/config --disable CONFIG_DEBUG_FS
 scripts/config --disable CONFIG_MAGIC_SYSRQ
 scripts/config --disable CONFIG_FTRACE
 scripts/config --disable CONFIG_COREDUMP
-scripts/config --disable CONFIG_UNIX98_PTYS
 scripts/config --disable CONFIG_LEGACY_PTYS
-scripts/config --disable CONFIG_INPUT_MOUSE
 
 # Resolve dependencies automatically
 make ARCH=x86 olddefconfig
@@ -393,7 +409,7 @@ TIMEOUT 5
 LABEL ginebra
 SAY [ GINEBRA LINUX - 30 seconds to swap the disk ]
 KERNEL bzImage
-APPEND root=/dev/fd0 rootfstype=ext2 rootdelay=30 rw console=tty0 init=/etc/init.d/rc tsc=unstable
+APPEND root=/dev/fd0 rootfstype=ext2 rootdelay=5 rw console=tty0 init=/etc/init.d/rc tsc=unstable vga=ask
 ```
 
 **Important parameters:**
@@ -446,15 +462,21 @@ The `/etc/init.d/rc` script performs:
 
 ### Floppy 1 (FAT12 for SYSLINUX)
 
+**Important:** Use SYSLINUX 4.x (e.g., 4.07), not version 6.x or 7.x. Newer versions are too large for the boot floppy.
+
 ```bash
+# Download SYSLINUX 4.07
+wget https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/4.xx/syslinux-4.07.tar.gz
+tar xzf syslinux-4.07.tar.gz
+
 # Create empty image
 dd if=/dev/zero of=floppy1-boot.img bs=1024 count=1440
 
 # Format as FAT12
 mkfs.vfat floppy1-boot.img
 
-# Install SYSLINUX
-syslinux floppy1-boot.img
+# Install SYSLINUX 4.07 bootloader
+syslinux-4.07/linux/syslinux floppy1-boot.img
 
 # Mount and copy files
 sudo mount -o loop floppy1-boot.img /mnt/floppy1
@@ -518,60 +540,104 @@ sudo umount /mnt/floppy2
 | Boot filesystem | FAT12 + initramfs | FAT12 (kernel only) |
 | Root filesystem | cpio.xz in RAM | ext2 on second floppy |
 | Modules | No module support | Extensible |
-| Network | No network | RTL8139 with modules |
+| Network | No network | RTL8139 and NE2K modules |
+| Package manager | None | Bali |
+| X11 | None | Xfbdev (TinyX) |
 
-## Precompiled Binaries
+## Bali Package Manager
 
-Static binaries compiled for i486 are available for download. Once Ginebra Linux is running with network access, you can download and run them directly.
+**Bali** (named after my other cat) is the package manager for Ginebra Linux. It's an interactive shell script that downloads and installs static binaries compiled for i486.
 
-### Available Binaries
+### Features
 
-| Binary | Size | Description |
-|--------|------|-------------|
-| [bash](./repo/bash) | ~1080KB | GNU Bash with readline and history |
-| [links](./repo/links) | ~1380KB | Text-based web browser (no SSL) |
-| [htop](./repo/htop) | ~300KB | Interactive process viewer (ncurses embedded) |
+- Interactive menu-driven interface
+- Downloads packages from HTTP server
+- Supports `.pkg.tar.gz` archives (extracts to /) or plain binaries
+- Fetches package list from server's `list.txt`
+- Minimal footprint (~2KB shell script)
 
-
-
-### Installing Binaries from Ginebra Linux
+### Usage
 
 ```bash
-# Configure network (if not already done)
+# Run bali (interactive)
+bali
+```
+
+Bali will:
+1. Show a banner and prompt for server IP and port
+2. Fetch and display available packages from `http://server:port/list.txt`
+3. Prompt for packages to install (space-separated names, `a` for all, `q` to quit)
+4. Download and install each selected package
+
+```
+,-----.          ,--.,--.
+|  |) /_  ,--,--.|  |`--'
+|  .-.  \' ,-.  ||  |,--.
+|  '--' /\ '-'  ||  ||  |
+`------'  `--`--'`--'`--'
+ Package Manager v0.2
+
+Server IP [192.168.100.149]:
+Server Port [8080]:
+
+Fetching package list...
+
+Available packages:
+-------------------
+  - bash
+  - vim
+  - htop
+  ...
+
+  (a = install all, q = quit)
+
+Packages to install: bash vim
+```
+
+### Setting Up a Package Server
+
+On your host machine, serve the `repo/` directory:
+
+```bash
+cd repo
+python3 -m http.server 8080
+```
+
+Create a `list.txt` with available package names (one per line):
+
+```bash
+ls *.pkg.tar.gz | sed 's/.pkg.tar.gz//' > list.txt
+```
+
+### Available Packages
+
+| Package | Description |
+|---------|-------------|
+| bash | GNU Bash with readline and history |
+| vim | Vi IMproved text editor |
+| htop | Interactive process viewer |
+| links | Text-based web browser |
+| mc | Midnight Commander file manager |
+| curl | Command-line HTTP client |
+| strace | System call tracer |
+| less | File pager |
+| nc | Netcat network utility |
+| dropbear | SSH client and server |
+| file | File type identifier |
+| dmenu | Dynamic menu for X |
+| dwm | Dynamic window manager |
+| st | Simple terminal for X |
+| xfbdev | TinyX framebuffer server |
+
+### Quick Start
+
+```bash
+# Configure network first
 ifconfig eth0 10.0.2.15 netmask 255.255.255.0
 route add default gw 10.0.2.2
 
-# Download bash
-wget http://your-server/repo/bash
-chmod +x bash
-./bash
-
-# Download links
-wget http://your-server/repo/links
-chmod +x links
-./links http://example.com
-
-# Download htop
-wget http://your-server/repo/htop
-chmod +x htop
-TERM=linux ./htop
-```
-
-### Quick Install Script
-
-```bash
-# Download and install to /bin
-cd /tmp
-wget http://your-server/repo/bash
-wget http://your-server/repo/links
-wget http://your-server/repo/htop
-chmod +x bash links htop
-mv bash links htop /bin/
-
-# Now you can use them directly
-bash
-links http://example.com
-TERM=linux htop
+# Run bali and follow the prompts
+bali
 ```
 
 ### Using Bash as Default Shell
@@ -591,22 +657,6 @@ Or set environment variables for history support:
 export HOME=/home
 export HISTFILE=/home/.bash_history
 export HISTSIZE=100
-```
-
-## Roadmap: Bali Package Manager
-
-**Bali** (named after my other cat) will be a minimal package manager for Ginebra Linux:
-
-- Download and install static binaries over HTTP
-- Simple package index (text file with URLs and checksums)
-- Minimal footprint suitable for floppy-based systems
-
-```bash
-# Future usage (planned)
-bali update                  # Fetch package index
-bali search vim              # Search for packages
-bali install vim             # Download and install
-bali list                    # List installed packages
 ```
 
 ## Demo

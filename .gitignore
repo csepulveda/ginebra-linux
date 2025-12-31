@@ -2,6 +2,8 @@ linux/*
 busybox-1_36_1/*
 filesystem/lib/*
 i486-linux-musl-cross/*
+repo/*.gz
+repo/build/*
 
 
 .DS_Store

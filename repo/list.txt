@@ -1,3 +1,15 @@
 bash
+curl
+dmenu
+dropbear
+dwm
+file
 htop
+less
 links
+mc
+nc
+st
+strace
+vim
+xfbdev-full
