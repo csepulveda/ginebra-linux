@@ -24,382 +24,186 @@ The system boots from the first floppy, gives you 30 seconds to swap to the seco
 
 ## Features
 
-- Linux Kernel 6.14.x compiled for i486
+- Linux Kernel 6.14.11 compiled for i486
 - BusyBox 1.36.1 (static build with musl)
-- Network support (RTL8139 and NE2K drivers)
+- Network support: RTL8139 (`8139too`), RTL8139C+ (`8139cp`) and NE2000 PCI, detected automatically, DHCP or static IP
 - Loadable kernel modules
+- **mia** setup tool: configures, builds and writes the floppies, serves the packages
 - **Bali package manager** for installing additional software
-- X11 support with Xfbdev (TinyX framebuffer server)
+- VESA framebuffer (up to 1024x768) and X11 with Xfbdev (TinyX) + dwm
 - System runs 100% from RAM after boot
 - Ideal for retro hardware or virtual machines
 
 ## Requirements
 
-- Ubuntu Linux (for compilation)
+- Linux with `podman` (or `docker`): the build runs inside an Ubuntu 24.04 container, no `sudo` or loop mounts needed
 - ~3GB of disk space
-- Packages: `build-essential`, `flex`, `bison`, `libncurses-dev`, `libelf-dev`, `libssl-dev`, `bc`, `syslinux`, `mtools`
+- `python3` for `mia`
+- `qemu-system-i386` (or `qemu-system-x86_64`) to test
 
-```bash
-sudo apt update
-sudo apt install build-essential flex bison libncurses-dev libelf-dev libssl-dev bc syslinux mtools dosfstools e2fsprogs
-```
+Building without containers also works on Ubuntu 24.04 with the packages listed in `scripts/Containerfile`.
 
 ## Project Structure
 
 ```
 ginebra-linux/
-├── linux/                    # Kernel source code
-├── busybox-1_36_1/          # BusyBox source code
-├── filesystem/              # Root filesystem
-│   ├── bin/                 # Commands (symlinks to busybox)
-│   ├── sbin/                # System commands
-│   ├── etc/init.d/rc        # Boot script
-│   ├── lib/modules/         # Kernel modules
-│   └── welcome              # ASCII banner
-├── i486-linux-musl-cross/   # Cross-compilation toolchain
-├── repo/                    # Package repository
-│   ├── bali                 # Bali package manager script
-│   ├── PACKAGES             # Package index file
-│   ├── build/               # Build directory (sources, objects)
-│   ├── build-*.sh           # Build scripts for each package
-│   └── *.pkg.tar.gz         # Compiled packages
-├── bzImage                  # Compiled kernel
-├── floppy1-boot.img         # Boot floppy image
-├── floppy2-rootfs.img       # Rootfs floppy image
-└── syslinux.cfg             # Bootloader configuration
+├── config/
+│   ├── kernel-6.14.11.config  # Kernel configuration (the one running on the real hardware)
+│   └── busybox-1.36.1.config  # BusyBox configuration
+├── filesystem/                # Root filesystem (floppy 2)
+│   ├── bin/ sbin/ usr/        # BusyBox 1.36.1 (static, musl) + symlinks, bali, ginebrafetch
+│   ├── usr/share/udhcpc/      # DHCP client script
+│   ├── etc/init.d/rc          # Stage 1 (PID 1): copy to RAM, pivot_root, exec init
+│   ├── etc/init.d/rc2         # Stage 2 (sysinit): release floppy, modules
+│   ├── etc/init.d/network     # NIC detection, DHCP or static IP
+│   ├── etc/ginebra.conf       # System configuration (written by mia)
+│   └── welcome                # ASCII banner
+├── mia                      # Setup tool (see below)
+├── scripts/
+│   ├── build.sh               # Build kernel + floppy images in a container
+│   ├── build-kernel.sh        # Kernel + modules (runs in the container)
+│   ├── build-busybox.sh       # BusyBox (runs in the container)
+│   ├── get-toolchain.sh       # i486 musl toolchain (musl.cc)
+│   ├── make-floppies.sh       # Floppy images without mounts (runs in the container)
+│   ├── run-qemu.sh            # Test on an emulated Pentium III with one floppy drive
+│   ├── write-floppy.sh        # Write an image to a real floppy and verify it
+│   ├── write-floppy-careful.py  # Track-by-track writer used by write-floppy.sh
+│   ├── backup-floppy.py       # Read-only, resumable backup of an old/failing floppy
+│   └── Containerfile          # Ubuntu 24.04 build environment
+├── repo/                      # Bali package repository
+│   ├── build-*.sh             # One build script per package (run by ./mia packages build)
+│   ├── src/                   # Sources of Ginebra's own packages (neofetch)
+│   └── patches/               # Patches used by the build scripts
+├── syslinux.cfg               # Bootloader configuration (floppy 1)
+├── bzImage                    # Prebuilt kernel
+├── floppy1-boot.img           # Prebuilt boot floppy
+└── floppy2-rootfs.img         # Prebuilt rootfs floppy
 ```
+
+Generated, not versioned: `linux/`, `busybox-1_36_1/`, `i486-linux-musl-cross/` (sources and toolchain),
+`dl/` (downloads), `out/` (build output), `mia.conf`, `repo/*.pkg.tar.gz`, `repo/PACKAGES`, `repo/build/`.
+
+## mia: setup tool
+
+`mia` prepares everything to boot Ginebra: it asks how the system should be configured, builds
+the kernel, BusyBox, Bali packages and floppy images in a container, serves the Bali repository,
+writes the floppies and runs the emulator. It only needs **python3** and **docker or podman**
+(works the same on Linux and macOS).
+
+```bash
+./mia setup                      # questions: target (fisico/qemu), hostname, DHCP or static IP,
+                                 # NIC driver, Bali server  -> mia.conf
+./mia build                      # kernel + floppies with that configuration -> out/
+./mia packages list              # Bali packages: available build scripts and built ones
+./mia packages build less nc     # build packages (or: build all)
+./mia packages import DIR        # or import already built *.pkg.tar.gz
+./mia serve                      # HTTP server for repo/ in a container (port 8080)
+./mia run                        # test in QEMU (Pentium III, one floppy drive)
+./mia write disk1 /dev/sdX       # write + verify the real floppies
+./mia write disk2 /dev/sdX
+./mia status
+```
+
+The configuration is baked into floppy 2 as `/etc/ginebra.conf` (the floppies are read-only, so
+that is the only persistence: to change it, run `./mia setup` and `./mia build floppies` again):
+
+```sh
+HOSTNAME=ginebra
+NET_MODE=dhcp            # or static: NET_IP, NET_NETMASK, NET_GATEWAY, NET_DNS
+NET_IFACE=eth0
+NIC=auto                 # or 8139too, 8139cp, ne2k-pci
+BALI_URL=http://192.168.1.10:8080
+```
+
+The server is plain HTTP: BusyBox `wget` on the Pentium III doesn't speak HTTPS. Bali reads
+`BALI_URL` and only asks for a server when it's empty.
+
+### Network
+
+At boot `/etc/init.d/network` finds the PCI network card and loads its driver:
+
+| Card | Driver |
+|------|--------|
+| RTL8139/A/B/C/D (PCI revision < 0x20), real cards of the era | `8139too` |
+| RTL8139C+ (revision >= 0x20), e.g. QEMU's `rtl8139` | `8139cp` |
+| NE2000 PCI (RTL8029, Winbond, VIA...) and any other card with a module | its `modalias` |
+
+Then it configures DHCP (`udhcpc`) or a static IP according to `/etc/ginebra.conf`.
 
 ## Building
 
-### 1. Download Toolchain
-
 ```bash
-wget https://musl.cc/i486-linux-musl-cross.tgz
-tar xzf i486-linux-musl-cross.tgz
-export PATH="$PWD/i486-linux-musl-cross/bin:$PATH"
+scripts/build.sh            # kernel + modules + both floppy images -> out/
+scripts/build.sh kernel     # only kernel + modules
+scripts/build.sh busybox    # only busybox -> out/busybox
+scripts/build.sh floppies   # only the images (after changing filesystem/ or syslinux.cfg)
 ```
 
-### 2. Build the Kernel
+The result:
 
-#### 2.1 Download the kernel
+| File | Contents |
+|------|----------|
+| `out/floppy1-boot.img` | FAT12, SYSLINUX 4.07, `bzImage` (1,339,904 bytes), `syslinux.cfg` |
+| `out/floppy2-rootfs.img` | ext2 (4K blocks, 192 inodes, label `ROOTFS`), `filesystem/` + kernel modules |
 
-```bash
-wget https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.14.11.tar.xz
-tar xf linux-6.14.11.tar.xz
-mv linux-6.14.11 linux
-cd linux
-```
+### Kernel configuration
 
-#### 2.2 Configuration from tinyconfig
+`config/kernel-6.14.11.config` is the configuration of the kernel running on the real Pentium III
+(build #60, Dec 31 2025). The final `.config` was lost, so it was reconstructed from the original
+floppy and validated against the Dec 27 `.config` found in a backup: the result has the same
+`bzImage` size (1,319,424 bytes), identical data/bss sections, the same modules and no differing
+strings. The remaining ~1.7KB of code comes from a newer Ubuntu gcc revision.
 
-We start from `tinyconfig` (the most minimal configuration) and enable only what's necessary:
+It starts from `tinyconfig` with the options that used to be listed here, plus these corrections:
 
-```bash
-cd linux
+- **CPU really set to i486**: `scripts/config --enable CONFIG_M486` alone leaves `CONFIG_M686`
+  selected; it must also be disabled (`--disable CONFIG_M686`). Modules show `vermagic: ... 486`.
+- **Enabled**: `FRAMEBUFFER_CONSOLE` (+ `DETECT_PRIMARY`), VGA 8x8 and 8x16 fonts, `VM86`,
+  `ADVISE_SYSCALLS`, `COMPAT_32BIT_TIME`, `I2C=m` (needed by `psmouse`), `FB_SIMPLE=m`
+- **Disabled**: `HID`, `VGA_ARB`, `ETHTOOL_NETLINK`, `INET_DIAG`, Intel perf uncore/RAPL/cstate,
+  `PCIEASPM`, `PCIEPORTBUS`, `BQL`
 
-# Start from tinyconfig
-make ARCH=x86 tinyconfig
+No patches: the kernel sources are vanilla 6.14.11.
 
-# ============================================
-# ARCHITECTURE AND CPU (i486)
-# ============================================
-scripts/config --enable CONFIG_M486
-scripts/config --disable CONFIG_64BIT
+Changes on top of the original kernel (bzImage 1,339,904 bytes, ~79KB still free on floppy 1):
 
-# ============================================
-# KERNEL COMPRESSION (XZ for minimum size)
-# ============================================
-scripts/config --disable CONFIG_KERNEL_GZIP
-scripts/config --enable CONFIG_KERNEL_XZ
+- `8139CP=m`: driver for RTL8139C+ cards (QEMU's `rtl8139`)
+- `PCI_QUIRKS=y`: without it `pci_cache_line_size` is never set and `pci_set_mwi()` fails, so
+  `8139cp` (and other drivers using MWI) can't probe on any machine. Also brings the workarounds
+  for chipsets of the era (PIIX, VIA, ALi)
+- `PACKET=y`: raw sockets, needed by the DHCP client
 
-# ============================================
-# INITRD / INITRAMFS
-# ============================================
-scripts/config --enable CONFIG_BLK_DEV_INITRD
-scripts/config --disable CONFIG_RD_GZIP
-scripts/config --disable CONFIG_RD_BZIP2
-scripts/config --disable CONFIG_RD_LZMA
-scripts/config --enable CONFIG_RD_XZ
-scripts/config --disable CONFIG_RD_LZO
-scripts/config --disable CONFIG_RD_LZ4
-scripts/config --disable CONFIG_RD_ZSTD
-
-# ============================================
-# SIZE OPTIMIZATION
-# ============================================
-scripts/config --disable CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
-scripts/config --enable CONFIG_CC_OPTIMIZE_FOR_SIZE
-scripts/config --enable CONFIG_SLUB_TINY
-
-# ============================================
-# KERNEL MODULES
-# ============================================
-scripts/config --enable CONFIG_MODULES
-scripts/config --enable CONFIG_MODULE_UNLOAD
-
-# ============================================
-# BLOCK DEVICES
-# ============================================
-scripts/config --enable CONFIG_BLOCK
-scripts/config --enable CONFIG_BLK_DEV_FD
-scripts/config --enable CONFIG_BLK_DEV_RAM
-scripts/config --set-val CONFIG_BLK_DEV_RAM_COUNT 1
-scripts/config --set-val CONFIG_BLK_DEV_RAM_SIZE 4096
-scripts/config --enable CONFIG_DEVTMPFS
-scripts/config --enable CONFIG_DEVTMPFS_MOUNT
-
-# ============================================
-# FILESYSTEMS
-# ============================================
-scripts/config --enable CONFIG_EXT2_FS
-scripts/config --enable CONFIG_FAT_FS
-scripts/config --enable CONFIG_MSDOS_FS
-scripts/config --enable CONFIG_PROC_FS
-scripts/config --enable CONFIG_PROC_SYSCTL
-scripts/config --enable CONFIG_SYSFS
-scripts/config --enable CONFIG_NLS
-scripts/config --enable CONFIG_NLS_CODEPAGE_437
-
-# ============================================
-# NETWORKING
-# ============================================
-scripts/config --enable CONFIG_NET
-scripts/config --enable CONFIG_INET
-scripts/config --enable CONFIG_UNIX
-scripts/config --disable CONFIG_IPV6
-scripts/config --enable CONFIG_NETDEVICES
-scripts/config --enable CONFIG_ETHERNET
-scripts/config --enable CONFIG_NET_VENDOR_REALTEK
-scripts/config --module CONFIG_8139TOO
-scripts/config --enable CONFIG_8139TOO_PIO
-scripts/config --module CONFIG_MII
-scripts/config --module CONFIG_CRC16
-scripts/config --enable CONFIG_NET_VENDOR_8390
-scripts/config --module CONFIG_NE2K_PCI
-
-# ============================================
-# PCI
-# ============================================
-scripts/config --enable CONFIG_PCI
-scripts/config --enable CONFIG_PCI_GOANY
-scripts/config --enable CONFIG_PCI_BIOS
-scripts/config --enable CONFIG_PCI_DIRECT
-
-# ============================================
-# INPUT / KEYBOARD / MOUSE
-# ============================================
-scripts/config --enable CONFIG_INPUT
-scripts/config --enable CONFIG_INPUT_KEYBOARD
-scripts/config --enable CONFIG_KEYBOARD_ATKBD
-scripts/config --enable CONFIG_INPUT_MOUSE
-scripts/config --module CONFIG_MOUSE_PS2
-scripts/config --enable CONFIG_INPUT_EVDEV
-scripts/config --enable CONFIG_INPUT_MOUSEDEV
-scripts/config --enable CONFIG_SERIO
-scripts/config --enable CONFIG_SERIO_I8042
-scripts/config --enable CONFIG_SERIO_LIBPS2
-
-# ============================================
-# TTY / CONSOLE / PTY
-# ============================================
-scripts/config --enable CONFIG_TTY
-scripts/config --enable CONFIG_VT
-scripts/config --enable CONFIG_VT_CONSOLE
-scripts/config --enable CONFIG_VGA_CONSOLE
-scripts/config --enable CONFIG_UNIX98_PTYS
-
-# ============================================
-# FRAMEBUFFER (for Xfbdev)
-# ============================================
-scripts/config --enable CONFIG_FB
-scripts/config --enable CONFIG_FB_VESA
-scripts/config --enable CONFIG_FB_SIMPLE
-
-# ============================================
-# EXECUTABLE FORMATS
-# ============================================
-scripts/config --enable CONFIG_BINFMT_ELF
-scripts/config --enable CONFIG_BINFMT_SCRIPT
-
-# ============================================
-# EXPERT OPTIONS (needed to access others)
-# ============================================
-scripts/config --enable CONFIG_EXPERT
-scripts/config --enable CONFIG_PRINTK
-scripts/config --enable CONFIG_POSIX_TIMERS
-scripts/config --enable CONFIG_MULTIUSER
-
-# ============================================
-# EEPROM (required by 8139too)
-# ============================================
-scripts/config --enable CONFIG_EEPROM_93CX6
-
-# ============================================
-# MISC
-# ============================================
-scripts/config --enable CONFIG_MICROCODE
-scripts/config --set-val CONFIG_HZ 250
-scripts/config --enable CONFIG_PERF_EVENTS
-
-# ============================================
-# DISABLE UNNECESSARY FEATURES
-# ============================================
-scripts/config --disable CONFIG_SMP
-scripts/config --disable CONFIG_SWAP
-scripts/config --disable CONFIG_BUG
-scripts/config --disable CONFIG_KALLSYMS
-scripts/config --disable CONFIG_FUTEX
-scripts/config --disable CONFIG_EPOLL
-scripts/config --disable CONFIG_SIGNALFD
-scripts/config --disable CONFIG_TIMERFD
-scripts/config --disable CONFIG_EVENTFD
-scripts/config --disable CONFIG_SHMEM
-scripts/config --disable CONFIG_AIO
-scripts/config --disable CONFIG_IO_URING
-scripts/config --disable CONFIG_MEMBARRIER
-scripts/config --disable CONFIG_CPU_MITIGATIONS
-scripts/config --disable CONFIG_HIGH_RES_TIMERS
-scripts/config --disable CONFIG_ACPI
-scripts/config --disable CONFIG_SUSPEND
-scripts/config --disable CONFIG_PM
-scripts/config --disable CONFIG_USB_SUPPORT
-scripts/config --disable CONFIG_SOUND
-scripts/config --disable CONFIG_SCSI
-scripts/config --disable CONFIG_ATA
-scripts/config --disable CONFIG_DRM
-scripts/config --disable CONFIG_WIRELESS
-scripts/config --disable CONFIG_WLAN
-scripts/config --disable CONFIG_CRYPTO
-scripts/config --disable CONFIG_VIRTUALIZATION
-scripts/config --disable CONFIG_HYPERVISOR_GUEST
-scripts/config --disable CONFIG_FW_LOADER
-scripts/config --disable CONFIG_DEBUG_FS
-scripts/config --disable CONFIG_MAGIC_SYSRQ
-scripts/config --disable CONFIG_FTRACE
-scripts/config --disable CONFIG_COREDUMP
-scripts/config --disable CONFIG_LEGACY_PTYS
-
-# Resolve dependencies automatically
-make ARCH=x86 olddefconfig
-```
-
-#### 2.3 Build kernel and modules
+To change it:
 
 ```bash
-# Build kernel
-make ARCH=x86 bzImage -j$(nproc)
-
-# Check size (should be less than ~900KB)
-du -ks arch/x86/boot/bzImage
-
-# Clean old modules and rebuild
-find . -name "*.ko" -delete
-make ARCH=x86 modules -j$(nproc)
+cd linux && make ARCH=x86 menuconfig && cp .config ../config/kernel-6.14.11.config
 ```
 
-#### 2.4 Interactive configuration (optional)
+The boot floppy has ~79KB free next to the kernel: check `out/floppy1-boot.img` still builds.
 
-If you need to adjust options manually:
+Modules on floppy 2: `8139too`, `8139cp`, `mii`, `ne2k-pci`, `8390`, `crc16`, `psmouse`, `i2c-core`, `simplefb`.
+
+`CONFIG_SHMEM` is off (as in `tinyconfig`), so the "tmpfs" the system runs from is really ramfs:
+it ignores `size=`, can use all the RAM and `df` reports 0 for it.
+
+### BusyBox
+
+`filesystem/bin/busybox` is BusyBox 1.36.1 (vanilla, no patches), static-pie, musl, i486:
+497,288 bytes, 75 applets. Its configuration is `config/busybox-1.36.1.config`:
 
 ```bash
-make ARCH=x86 menuconfig
+scripts/build.sh busybox          # -> out/busybox
+cp out/busybox filesystem/bin/busybox
 ```
 
-### 3. Build BusyBox
+It uses the musl toolchain from [musl.cc](https://musl.cc/) (`i486-linux-musl-cross`), downloaded
+automatically. `crypt` and `/etc/passwd` handling come from musl (`USE_BB_CRYPT` and `USE_BB_PWD_GRP`
+are off), `uname -o` reports `GNU/Linux`.
 
-```bash
-cd busybox-1_36_1
-
-# Configure (use existing config or menuconfig)
-make ARCH=x86 olddefconfig
-# make ARCH=x86 menuconfig
-
-# Build and install
-make ARCH=x86 -j$(nproc)
-make ARCH=x86 install
-
-# Copy to filesystem
-sudo rsync -av _install/ ../filesystem/
-```
-
-### 4. Create Mount Points
-
-```bash
-sudo mkdir -p /mnt/floppy1 /mnt/floppy2
-```
-
-### 5. Update Floppy 1 (Boot)
-
-```bash
-cd linux
-
-# Mount boot image
-sudo mount -o loop ../floppy1-boot.img /mnt/floppy1
-
-# Copy kernel
-sudo cp arch/x86/boot/bzImage /mnt/floppy1/bzImage
-
-# Check space
-df -k /mnt/floppy1
-
-# Unmount
-sudo umount /mnt/floppy1
-```
-
-### 6. Update Floppy 2 (RootFS)
-
-```bash
-cd linux
-
-# Get kernel version
-KVER=$(make kernelrelease)
-echo "Kernel version: $KVER"
-
-# Prepare modules directory
-sudo mkdir -p ../filesystem/lib/modules/$KVER
-sudo rm -fr ../filesystem/lib/modules/$KVER/*
-
-# Copy compiled modules
-find . -name "*.ko" | xargs -I {} sudo cp {} ../filesystem/lib/modules/$KVER
-
-# Generate module dependencies
-sudo depmod -b ../filesystem -a $KVER
-
-# Verify installed modules
-sudo find ../filesystem/lib/modules/$KVER
-
-# Mount rootfs image
-sudo mount -o loop ../floppy2-rootfs.img /mnt/floppy2
-
-# Sync filesystem
-sudo rsync -av ../filesystem/ /mnt/floppy2/
-
-# Check space
-df -k /mnt/floppy2
-
-# Unmount
-sudo umount /mnt/floppy2
-```
-
-### 7. Edit SYSLINUX Configuration (Optional)
-
-```bash
-# Mount boot floppy
-sudo mount -o loop floppy1-boot.img /mnt/floppy1
-
-# Edit configuration
-sudo vim syslinux.cfg
-
-# Copy to floppy
-sudo cp syslinux.cfg /mnt/floppy1/
-
-# Unmount
-sudo umount /mnt/floppy1
-```
+The original busybox of the real floppy (485,000 bytes, 73 applets) is reproduced exactly by this
+config without `UDHCPC` and `SHA256SUM`, which were added for DHCP and Bali checksums.
 
 ## SYSLINUX Configuration
-
-The `syslinux.cfg` file for the two-floppy system:
 
 ```
 DEFAULT ginebra
@@ -407,130 +211,100 @@ PROMPT 1
 TIMEOUT 5
 
 LABEL ginebra
-SAY [ GINEBRA LINUX - 30 seconds to swap the disk ]
 KERNEL bzImage
-APPEND root=/dev/fd0 rootfstype=ext2 rootdelay=5 rw console=tty0 init=/etc/init.d/rc tsc=unstable vga=ask
+SAY [ GINEBRA LINUX - 30 segundos para cambiar el disco ]
+APPEND root=/dev/fd0 rootfstype=ext2 rootdelay=5 ro console=tty0 init=/etc/init.d/rc tsc=unstable vga=ask
 ```
 
-**Important parameters:**
-- `root=/dev/fd0` - Use floppy drive as root
-- `rootfstype=ext2` - ext2 filesystem
-- `rootdelay=30` - Wait 30 seconds to swap disk
-- `init=/etc/init.d/rc` - Custom init script
+- `vga=ask` - the kernel stops at *"Press <ENTER> to see video modes..."* and waits 30 seconds:
+  **this is the moment to swap to floppy 2**, then press SPACE (text mode) or ENTER to pick a
+  graphics mode (see [Graphics](#graphics))
+- `root=/dev/fd0 rootfstype=ext2 rootdelay=5` - mount floppy 2 as root
+- `ro` - floppy 2 is **never written** (see [Taking care of the floppies](#taking-care-of-the-floppies))
+- `init=/etc/init.d/rc` - stage 1 init script
+
+SYSLINUX must be 4.x (4.07): newer versions are too large to fit next to the kernel.
+
+## Boot Process
+
+1. SYSLINUX loads `bzImage` from floppy 1
+2. At the `vga=ask` prompt you swap to floppy 2 and press SPACE
+3. The kernel mounts floppy 2 **read-only** and runs `/etc/init.d/rc` as PID 1, which:
+   mounts `/proc`, `/sys` and a RAM filesystem, copies `/bin /sbin /etc /lib /usr` to RAM,
+   `pivot_root`s into it and `exec`s `/sbin/init` **from RAM**
+4. BusyBox init runs `/etc/init.d/rc2` (sysinit), which **unmounts the floppy**
+   ("Disquete liberado: ya puedes retirarlo"), runs `/etc/init.d/network` (NIC driver,
+   DHCP or static IP from `/etc/ginebra.conf`), loads `psmouse` and shows the banner
+5. From here on the system runs 100% from RAM; the floppy can be removed
+
+## Graphics
+
+The kernel has `vesafb` built in: `/dev/fb0` only exists if a VESA mode is chosen at boot.
+At the `vga=ask` prompt press **ENTER** (instead of SPACE) and type the mode number:
+
+| Mode | Resolution |
+|------|------------|
+| `311` | 640x480, 16 bits |
+| `314` | 800x600, 16 bits |
+| `317` | 1024x768, 16 bits |
+| `305` / `318` | 1024x768, 8 / 24 bits |
+
+`scan` lists every mode the video card supports. Check it with `fbset` or `dmesg | grep vesafb`.
+
+For X install `xfbdev-full`, `dwm`, `st` and `dmenu` with Bali and run `startx`. In dwm the
+modifier is **Alt**: Alt+Shift+Enter opens a terminal (`st`), Alt+p runs `dmenu`, Alt+Shift+c
+closes a window, Alt+Shift+q quits.
 
 ## Testing with QEMU
 
 ```bash
-# With two simulated physical floppies
-qemu-system-i386 -m 32 \
-    -drive file=floppy1-boot.img,format=raw,if=floppy,index=0 \
-    -drive file=floppy2-rootfs.img,format=raw,if=floppy,index=1 \
-    -boot a
-
-# With network (RTL8139)
-qemu-system-i386 -m 32 \
-    -drive file=floppy1-boot.img,format=raw,if=floppy,index=0 \
-    -drive file=floppy2-rootfs.img,format=raw,if=floppy,index=1 \
-    -boot a \
-    -netdev user,id=net0 \
-    -device rtl8139,netdev=net0
+./mia run                           # uses out/, configured by ./mia setup
+scripts/run-qemu.sh                 # Pentium III, 32MB, one floppy drive, RTL8139
+NIC=ne2k_pci scripts/run-qemu.sh    # use the NE2000 card instead
 ```
+
+It boots floppy 1 and, at the `vga=ask` prompt, swaps to floppy 2 (inserted write-protected) through
+the QEMU monitor, exactly as you would do on the real machine. Press SPACE to continue.
+
+**Network in QEMU:** QEMU's `rtl8139` is an RTL8139**C+**, which needs `8139cp` (the original
+system only had `8139too`, used by the real cards). It's detected automatically now; with
+`NIC=ne2k_pci scripts/run-qemu.sh` the NE2000 card is used instead. In QEMU the host is
+`10.0.2.2`, so the Bali server is `http://10.0.2.2:8080` (`./mia setup` with target `qemu`).
 
 ## Writing to Real Floppies
 
 ```bash
-# Floppy 1 (boot)
-sudo dd if=floppy1-boot.img of=/dev/fd0 bs=1024
-
-# Floppy 2 (rootfs)
-sudo dd if=floppy2-rootfs.img of=/dev/fd0 bs=1024
+./mia write disk1 /dev/sdX                                     # USB floppy drive
+./mia write disk2 /dev/sdX
+# or directly:
+sudo scripts/write-floppy.sh out/floppy1-boot.img /dev/sdX
 ```
 
-## Init Script (rc)
+The script refuses anything that isn't a 1.44MB removable disk. It writes track by track
+(`write-floppy-careful.py`): each track is read back and compared, and sector 0 is re-read to make
+sure the head is still on the right cylinder (cheap USB drives lose alignment and write to the
+wrong track). Bad tracks are rewritten, and a final pass verifies the whole disk again. If it
+still fails, try another floppy.
 
-The `/etc/init.d/rc` script performs:
+If the drive keeps resetting (`dmesg` shows USB disconnects), plug it into a rear USB port or a
+powered hub: the motor draws more current than some front ports give.
 
-1. Mounts `/proc`, `/sys` and 16MB tmpfs on `/tmp`
-2. Copies entire system (`/bin`, `/sbin`, `/etc`, `/lib`, `/usr`) to RAM
-3. Executes `pivot_root` to switch to the RAM-based system
-4. Unmounts the original floppy
-5. Loads network modules (`8139too`)
-6. Displays the welcome banner
-7. Starts interactive shell
+## Taking care of the floppies
 
-## Creating New Floppy Images
+The original rootfs floppy was mounted read-write during the whole session: `rc2` couldn't unmount it
+because `init` (PID 1) was still running from it. Every boot updated the superblock, and any write,
+`sync` or power-off with the motor spinning could leave it half-written. Now:
 
-### Floppy 1 (FAT12 for SYSLINUX)
-
-**Important:** Use SYSLINUX 4.x (e.g., 4.07), not version 6.x or 7.x. Newer versions are too large for the boot floppy.
-
-```bash
-# Download SYSLINUX 4.07
-wget https://mirrors.edge.kernel.org/pub/linux/utils/boot/syslinux/4.xx/syslinux-4.07.tar.gz
-tar xzf syslinux-4.07.tar.gz
-
-# Create empty image
-dd if=/dev/zero of=floppy1-boot.img bs=1024 count=1440
-
-# Format as FAT12
-mkfs.vfat floppy1-boot.img
-
-# Install SYSLINUX 4.07 bootloader
-syslinux-4.07/linux/syslinux floppy1-boot.img
-
-# Mount and copy files
-sudo mount -o loop floppy1-boot.img /mnt/floppy1
-sudo cp bzImage /mnt/floppy1/
-sudo cp syslinux.cfg /mnt/floppy1/
-sudo umount /mnt/floppy1
-```
-
-### Floppy 2 (ext2 for rootfs)
-
-```bash
-# Create empty image
-dd if=/dev/zero of=floppy2-rootfs.img bs=1024 count=1440
-
-# Format as ext2
-mkfs.ext2 floppy2-rootfs.img
-
-# Mount and copy filesystem
-sudo mount -o loop floppy2-rootfs.img /mnt/floppy2
-sudo rsync -av filesystem/ /mnt/floppy2/
-sudo umount /mnt/floppy2
-```
-
-## Quick Commands
-
-```bash
-# Update kernel only
-cd linux && make ARCH=x86 bzImage -j$(nproc) && \
-sudo mount -o loop ../floppy1-boot.img /mnt/floppy1 && \
-sudo cp arch/x86/boot/bzImage /mnt/floppy1/ && \
-sudo umount /mnt/floppy1
-
-# Update filesystem only
-sudo mount -o loop floppy2-rootfs.img /mnt/floppy2 && \
-sudo rsync -av filesystem/ /mnt/floppy2/ && \
-sudo umount /mnt/floppy2
-
-# Update kernel + modules + filesystem
-cd linux && \
-make ARCH=x86 bzImage -j$(nproc) && \
-find . -name "*.ko" -delete && \
-make ARCH=x86 modules -j$(nproc) && \
-KVER=$(make kernelrelease) && \
-sudo mkdir -p ../filesystem/lib/modules/$KVER && \
-sudo rm -fr ../filesystem/lib/modules/$KVER/* && \
-find . -name "*.ko" | xargs -I {} sudo cp {} ../filesystem/lib/modules/$KVER && \
-sudo depmod -b ../filesystem -a $KVER && \
-sudo mount -o loop ../floppy1-boot.img /mnt/floppy1 && \
-sudo cp arch/x86/boot/bzImage /mnt/floppy1/ && \
-sudo umount /mnt/floppy1 && \
-sudo mount -o loop ../floppy2-rootfs.img /mnt/floppy2 && \
-sudo rsync -av ../filesystem/ /mnt/floppy2/ && \
-sudo umount /mnt/floppy2
-```
+- Floppy 2 is mounted **read-only** (`ro`) and **unmounted** once the system is in RAM.
+  Nothing writes to it, not even `sync`.
+- **Slide the write-protect tab** on both floppies after writing them (`write-floppy.sh` reminds you).
+  Ginebra boots fine with both disks protected.
+- Remove the floppy once you see *"Disquete liberado"*; don't power off while the drive light is on.
+- Always verify after writing (`write-floppy.sh` does it) and keep the images: a floppy is a copy, not a backup.
+- To rescue an old floppy, use `scripts/backup-floppy.py /dev/sdX disk.img`. It is read-only and resumable,
+  and it stops if the drive loses track alignment (worn USB drives do: they start returning data from the
+  wrong cylinder). Then replug the drive and run it again.
+- Floppies and heads wear: clean the drive head and don't read a failing disk over and over.
 
 ## Differences from Original Floppinux
 
@@ -551,10 +325,12 @@ sudo umount /mnt/floppy2
 ### Features
 
 - Interactive menu-driven interface
-- Downloads packages from HTTP server
+- Downloads packages from HTTP server (`BALI_URL`, written to the floppy by `mia`)
 - Supports `.pkg.tar.gz` archives (extracts to /) or plain binaries
 - Fetches package list from server's `list.txt`
 - Minimal footprint (~2KB shell script)
+
+Packages are installed in RAM, so they are gone after a reboot: install them again with `bali`.
 
 ### Usage
 
@@ -564,7 +340,7 @@ bali
 ```
 
 Bali will:
-1. Show a banner and prompt for server IP and port
+1. Show a banner and use the server in `BALI_URL` (`/etc/ginebra.conf`), or prompt for IP and port
 2. Fetch and display available packages from `http://server:port/list.txt`
 3. Prompt for packages to install (space-separated names, `a` for all, `q` to quit)
 4. Download and install each selected package
@@ -575,10 +351,9 @@ Bali will:
 |  .-.  \' ,-.  ||  |,--.
 |  '--' /\ '-'  ||  ||  |
 `------'  `--`--'`--'`--'
- Package Manager v0.2
+ Package Manager v0.3
 
-Server IP [192.168.100.149]:
-Server Port [8080]:
+Server: http://192.168.1.10:8080
 
 Fetching package list...
 
@@ -596,18 +371,22 @@ Packages to install: bash vim
 
 ### Setting Up a Package Server
 
-On your host machine, serve the `repo/` directory:
-
 ```bash
-cd repo
-python3 -m http.server 8080
+./mia packages build all          # or: ./mia packages import DIR
+./mia serve                       # serves repo/ on port 8080 (container)
 ```
 
-Create a `list.txt` with available package names (one per line):
+Built packages (`repo/*.pkg.tar.gz`) are not versioned: build them with `./mia packages build`
+or import an existing set with `./mia packages import DIR`. `build all` takes a while: `xfbdev`
+builds the X libraries first, which `dmenu`, `dwm` and `st` need.
 
-```bash
-ls *.pkg.tar.gz | sed 's/.pkg.tar.gz//' > list.txt
-```
+`mia` writes `repo/PACKAGES` (name, version, size, sha256, description) and `repo/list.txt`.
+The server URL is written to the floppies by `./mia setup` + `./mia build floppies`.
+
+To add a package, write `repo/build-NAME.sh`: it must leave `repo/NAME.pkg.tar.gz`, a tarball
+extracted at `/` on the Pentium III. Everything is static (musl, i486), because there are no
+shared libraries on Ginebra; ncurses programs carry their terminal definitions (`--with-fallbacks`)
+since there is no terminfo database.
 
 ### Available Packages
 
@@ -620,38 +399,31 @@ ls *.pkg.tar.gz | sed 's/.pkg.tar.gz//' > list.txt
 | mc | Midnight Commander file manager |
 | curl | Command-line HTTP client |
 | strace | System call tracer |
+| tmux | Terminal multiplexer (prefix Ctrl+b; panes use TERM=xterm) |
 | less | File pager |
 | nc | Netcat network utility |
+| neofetch | System info with Ginebra the cat |
 | dropbear | SSH client and server |
 | file | File type identifier |
 | dmenu | Dynamic menu for X |
 | dwm | Dynamic window manager |
 | st | Simple terminal for X |
-| xfbdev | TinyX framebuffer server |
+| xfbdev-full | TinyX framebuffer X server, xkb, fonts and `startx` |
 
 ### Quick Start
 
-```bash
-# Configure network first
-ifconfig eth0 10.0.2.15 netmask 255.255.255.0
-route add default gw 10.0.2.2
+The network is configured at boot (DHCP or static IP, see `/etc/ginebra.conf`), so just run:
 
-# Run bali and follow the prompts
+```bash
 bali
 ```
 
-### Using Bash as Default Shell
+### Using Bash
 
-To use bash instead of ash (BusyBox shell), edit `/etc/inittab`:
+Install `bash` with Bali and run `bash`. Don't point `/etc/inittab` at `/bin/bash`: bash is not
+on the floppy (it is installed in RAM after boot), so the consoles would fail to start.
 
-```bash
-# Change this line:
-::askfirst:/bin/sh
-# To:
-::askfirst:/bin/bash
-```
-
-Or set environment variables for history support:
+For history support:
 
 ```bash
 export HOME=/home

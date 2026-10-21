@@ -7,7 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$SCRIPT_DIR"
 BUILD_DIR="$REPO_DIR/build"
-TOOLCHAIN="/home/cesar/floppinux/i486-linux-musl-cross"
+TOOLCHAIN="${TOOLCHAIN:-$(cd "$SCRIPT_DIR/.." && pwd)/i486-linux-musl-cross}"
 
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"

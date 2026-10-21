@@ -1,0 +1,57 @@
+#!/bin/sh
+# network - detecta la tarjeta de red, carga su driver y configura la red segun /etc/ginebra.conf
+
+. /etc/ginebra.conf
+
+# Elige el driver de una tarjeta PCI: $1=vendor $2=device $3=revision $4=modalias
+nic_driver() {
+    case "$1:$2" in
+        0x10ec:0x8139)
+            # RTL8139/A/B/C/D (rev < 0x20) usan 8139too; RTL8139C+ (rev >= 0x20, p.ej. QEMU) usa 8139cp
+            case "$3" in 0x0?|0x1?) echo 8139too ;; *) echo 8139cp ;; esac ;;
+        *)  echo "$4" ;;
+    esac
+}
+
+load_nic() {
+    if [ "$NIC" != auto ] && [ -n "$NIC" ]; then
+        modprobe "$NIC" && echo "Red: driver $NIC (forzado)"
+        return
+    fi
+    for d in /sys/bus/pci/devices/*; do
+        case "$(cat $d/class)" in 0x0200*) ;; *) continue ;; esac
+        drv=$(nic_driver "$(cat $d/vendor)" "$(cat $d/device)" "$(cat $d/revision)" "$(cat $d/modalias)")
+        if modprobe "$drv" 2>/dev/null; then
+            bound=$(ls -l "$d/driver" 2>/dev/null | awk -F/ '{print $NF}')
+            echo "Red: $(cat $d/vendor):$(cat $d/device) rev $(cat $d/revision) -> ${bound:-$drv}"
+        else
+            echo "Red: sin driver para $(cat $d/vendor):$(cat $d/device)"
+        fi
+    done
+}
+
+hostname "${HOSTNAME:-ginebra}"
+ifconfig lo 127.0.0.1 up
+load_nic
+
+if ! ifconfig "$NET_IFACE" >/dev/null 2>&1; then
+    echo "Red: no hay interfaz $NET_IFACE"
+    exit 0
+fi
+
+case "$NET_MODE" in
+    static)
+        ifconfig "$NET_IFACE" "$NET_IP" netmask "${NET_NETMASK:-255.255.255.0}" up
+        [ -n "$NET_GATEWAY" ] && route add default gw "$NET_GATEWAY"
+        [ -n "$NET_DNS" ] && echo "nameserver $NET_DNS" > /etc/resolv.conf
+        echo "Red: $NET_IFACE $NET_IP (fija)"
+        ;;
+    *)
+        ifconfig "$NET_IFACE" up
+        if udhcpc -i "$NET_IFACE" -n -q -t 5 -T 2 -s /usr/share/udhcpc/default.script >/dev/null 2>&1; then
+            echo "Red: $NET_IFACE $(ifconfig "$NET_IFACE" | awk '/inet addr/ {sub("addr:", "", $2); print $2}') (DHCP)"
+        else
+            echo "Red: DHCP sin respuesta en $NET_IFACE"
+        fi
+        ;;
+esac

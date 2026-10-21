@@ -9,7 +9,9 @@ less
 links
 mc
 nc
+neofetch
 st
 strace
+tmux
 vim
 xfbdev-full

@@ -1,0 +1,390 @@
+#!/usr/bin/env python3
+"""mia - Ginebra Linux setup tool.
+
+Prepares everything needed to boot Ginebra on a real Pentium III (or QEMU):
+asks how the system should be configured, builds the kernel, busybox, Bali
+packages and floppy images inside a container, serves the Bali repository
+over HTTP, writes the floppies and runs the emulator.
+
+Requirements: python3 and docker or podman. Everything else runs in a container.
+
+    ./mia setup                  questions -> mia.conf
+    ./mia build [all|kernel|busybox|floppies]
+    ./mia packages list|build NAME...|build all|import DIR|index
+    ./mia serve [start|stop|status]
+    ./mia write disk1|disk2 DEVICE
+    ./mia run
+    ./mia status
+"""
+import configparser
+import hashlib
+import ipaddress
+import os
+import shutil
+import socket
+import subprocess
+import sys
+import tarfile
+
+ROOT = os.path.dirname(os.path.realpath(__file__))
+CONF = os.path.join(ROOT, 'mia.conf')
+OUT = os.path.join(ROOT, 'out')
+REPO = os.path.join(ROOT, 'repo')
+IMAGE = 'ginebra-build'
+SERVER = 'ginebra-bali'
+SERVE_PORT = 8080
+
+DEFAULTS = {
+    'target': 'fisico',
+    'hostname': 'ginebra',
+    'net_mode': 'dhcp',
+    'net_ip': '192.168.100.99',
+    'net_netmask': '255.255.255.0',
+    'net_gateway': '',
+    'net_dns': '',
+    'nic': 'auto',
+    'bali_url': '',
+    'serve_port': str(SERVE_PORT),
+}
+
+DESCRIPTIONS = {
+    'bash': 'GNU Bash with readline and history',
+    'curl': 'Command-line HTTP client',
+    'dmenu': 'Dynamic menu for X',
+    'dropbear': 'SSH client and server',
+    'dwm': 'Dynamic window manager',
+    'file': 'File type identifier',
+    'htop': 'Interactive process viewer',
+    'less': 'File pager',
+    'links': 'Text-based web browser',
+    'mc': 'Midnight Commander file manager',
+    'nc': 'Netcat network utility',
+    'neofetch': 'System info with Ginebra the cat',
+    'st': 'Simple terminal for X',
+    'strace': 'System call tracer',
+    'tmux': 'Terminal multiplexer',
+    'vim': 'Vi IMproved text editor',
+    'xfbdev-full': 'TinyX framebuffer X server, xkb and fonts',
+}
+
+# Build scripts whose package has a different name (repo/build-SCRIPT.sh -> repo/PACKAGE.pkg.tar.gz)
+PACKAGE_OF = {'xfbdev': 'xfbdev-full'}
+
+
+# ---------------------------------------------------------------- helpers
+
+def die(msg):
+    print(f'mia: {msg}', file=sys.stderr)
+    sys.exit(1)
+
+
+def engine():
+    for e in ('docker', 'podman'):
+        if shutil.which(e):
+            return e
+    die('necesitas docker o podman instalado')
+
+
+def run(cmd, check=True, **kw):
+    print('+ ' + ' '.join(cmd), flush=True)
+    r = subprocess.run(cmd, **kw)
+    if check and r.returncode:
+        die(f'fallo: {" ".join(cmd)}')
+    return r
+
+
+def build_image():
+    run([engine(), 'build', '-q', '-t', IMAGE, '-f',
+         os.path.join(ROOT, 'scripts', 'Containerfile'), os.path.join(ROOT, 'scripts')],
+        stdout=subprocess.DEVNULL)
+
+
+def in_container(*cmd, interactive=False):
+    """Run a command inside the build container with the repo mounted at /ginebra."""
+    build_image()
+    args = [engine(), 'run', '--rm', '-v', f'{ROOT}:/ginebra:Z', '-w', '/ginebra']
+    if interactive and sys.stdin.isatty():
+        args.append('-it')
+    run(args + [IMAGE] + list(cmd))
+
+
+def load():
+    c = configparser.ConfigParser()
+    c['mia'] = DEFAULTS
+    if os.path.exists(CONF):
+        c.read(CONF)
+    return c['mia']
+
+
+def lan_ip():
+    """IP of this machine on the LAN (the one the Pentium III will reach)."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(('192.0.2.1', 9))  # no packet is sent
+        return s.getsockname()[0]
+    except OSError:
+        return '127.0.0.1'
+    finally:
+        s.close()
+
+
+def ask(question, default='', choices=None, validate=None):
+    hint = f' ({"/".join(choices)})' if choices else ''
+    while True:
+        a = input(f'{question}{hint} [{default}]: ').strip() or default
+        if choices and a not in choices:
+            print(f'  elige una de: {", ".join(choices)}')
+            continue
+        if validate and a:
+            try:
+                validate(a)
+            except ValueError as e:
+                print(f'  valor no valido: {e}')
+                continue
+        return a
+
+
+def ipv4(v):
+    ipaddress.IPv4Address(v)
+
+
+# ---------------------------------------------------------------- setup
+
+def cmd_setup(_args):
+    cfg = load()
+    print('Configuracion de Ginebra Linux. Queda en los disquetes al generarlos (./mia build).\n')
+
+    cfg['target'] = ask('Donde va a correr', cfg['target'], ['fisico', 'qemu'])
+    qemu = cfg['target'] == 'qemu'
+    cfg['hostname'] = ask('Nombre del equipo', cfg['hostname'])
+
+    if qemu:
+        print('  QEMU: red por DHCP (10.0.2.x), el host es 10.0.2.2')
+        cfg['net_mode'] = 'dhcp'
+    else:
+        cfg['net_mode'] = ask('Red', cfg['net_mode'], ['dhcp', 'static'])
+    if cfg['net_mode'] == 'static':
+        cfg['net_ip'] = ask('  IP', cfg['net_ip'], validate=ipv4)
+        cfg['net_netmask'] = ask('  Mascara', cfg['net_netmask'], validate=ipv4)
+        cfg['net_gateway'] = ask('  Gateway (vacio = sin gateway)', cfg['net_gateway'], validate=ipv4)
+        cfg['net_dns'] = ask('  DNS (vacio = sin DNS)', cfg['net_dns'], validate=ipv4)
+
+    cfg['nic'] = ask('Driver de red (auto detecta RTL8139/RTL8139C+/NE2000)', cfg['nic'],
+                     ['auto', '8139too', '8139cp', 'ne2k-pci'])
+
+    port = cfg['serve_port']
+    host = '10.0.2.2' if qemu else lan_ip()
+    suggested = f'http://{host}:{port}'
+    if cfg['bali_url'] and not (qemu and '10.0.2.2' not in cfg['bali_url']):
+        suggested = cfg['bali_url']
+    cfg['bali_url'] = ask('Servidor de paquetes de Bali', suggested).rstrip('/')
+
+    c = configparser.ConfigParser()
+    c['mia'] = dict(cfg)
+    with open(CONF, 'w') as f:
+        f.write('# Generado por ./mia setup\n')
+        c.write(f)
+    print(f'\nGuardado en {os.path.relpath(CONF)}. Siguiente paso: ./mia build')
+
+
+def write_overlay(cfg):
+    """etc/ginebra.conf baked into floppy 2 (the only persistence Ginebra has)."""
+    etc = os.path.join(OUT, 'overlay', 'etc')
+    os.makedirs(etc, exist_ok=True)
+    with open(os.path.join(etc, 'ginebra.conf'), 'w') as f:
+        f.write(f"""# Ginebra Linux - generado por mia ({cfg['target']})
+HOSTNAME={cfg['hostname']}
+
+NET_MODE={cfg['net_mode']}
+NET_IFACE=eth0
+NET_IP={cfg['net_ip']}
+NET_NETMASK={cfg['net_netmask']}
+NET_GATEWAY={cfg['net_gateway']}
+NET_DNS={cfg['net_dns']}
+
+NIC={cfg['nic']}
+
+BALI_URL={cfg['bali_url']}
+""")
+
+
+# ---------------------------------------------------------------- build
+
+def cmd_build(args):
+    what = args[0] if args else 'all'
+    if what not in ('all', 'kernel', 'busybox', 'floppies'):
+        die('uso: mia build [all|kernel|busybox|floppies]')
+    if not os.path.exists(CONF):
+        die('primero ./mia setup')
+    cfg = load()
+    if what in ('all', 'kernel'):
+        in_container('scripts/build-kernel.sh')
+    if what == 'busybox':
+        in_container('scripts/build-busybox.sh')
+        print('Para usarlo: cp out/busybox filesystem/bin/busybox')
+    if what in ('all', 'floppies'):
+        if not os.path.exists(os.path.join(ROOT, 'linux', 'arch', 'x86', 'boot', 'bzImage')):
+            in_container('scripts/build-kernel.sh')
+        write_overlay(cfg)
+        in_container('scripts/make-floppies.sh')
+        print(f"\nDisquetes listos en out/ para '{cfg['target']}' "
+              f"(red {cfg['net_mode']}, Bali {cfg['bali_url'] or 'pregunta'}).")
+        print('Siguiente: ./mia serve  y luego  ./mia run  o  ./mia write disk1 /dev/sdX')
+
+
+# ---------------------------------------------------------------- packages
+
+def available_scripts():
+    return sorted(f[6:-3] for f in os.listdir(REPO) if f.startswith('build-') and f.endswith('.sh'))
+
+
+def built_packages():
+    return sorted(f[:-11] for f in os.listdir(REPO) if f.endswith('.pkg.tar.gz'))
+
+
+def cmd_packages(args):
+    sub = args[0] if args else 'list'
+    if sub == 'list':
+        built = set(built_packages())
+        for name in sorted({PACKAGE_OF.get(n, n) for n in available_scripts()} | built):
+            mark = 'listo ' if name in built else '      '
+            print(f'  [{mark}] {name:12} {DESCRIPTIONS.get(name, "")}')
+        print('\n  ./mia packages build NOMBRE... | build all | import DIR | index')
+    elif sub == 'build':
+        names = args[1:]
+        scripts = available_scripts()
+        if names == ['all']:
+            # xfbdev first: it builds xorg-deps, which dmenu, dwm and st link against
+            names = sorted(scripts, key=lambda n: n != 'xfbdev')
+        if not names:
+            die('uso: mia packages build NOMBRE... | all')
+        script_of = {p: n for n, p in PACKAGE_OF.items()}
+        names = [script_of.get(n, n) for n in names]
+        for n in names:
+            if n not in scripts:
+                die(f'no existe repo/build-{n}.sh')
+        for n in names:
+            in_container('bash', '-c', f'scripts/get-toolchain.sh && repo/build-{n}.sh')
+        cmd_packages(['index'])
+    elif sub == 'import':
+        if len(args) < 2 or not os.path.isdir(args[1]):
+            die('uso: mia packages import DIR')
+        n = 0
+        for f in sorted(os.listdir(args[1])):
+            if f.endswith('.pkg.tar.gz'):
+                shutil.copy2(os.path.join(args[1], f), os.path.join(REPO, f))
+                print(f'  importado {f}')
+                n += 1
+        print(f'{n} paquetes importados')
+        cmd_packages(['index'])
+    elif sub == 'index':
+        write_index()
+    else:
+        die('uso: mia packages list|build|import|index')
+
+
+def write_index():
+    """repo/PACKAGES: name version size sha256 description (one per line). Also list.txt."""
+    lines = []
+    for name in built_packages():
+        path = os.path.join(REPO, f'{name}.pkg.tar.gz')
+        try:
+            with tarfile.open(path) as t:
+                t.getmembers()
+        except (tarfile.TarError, OSError) as e:
+            print(f'  ignorado {name}: archivo danado ({e})')
+            continue
+        h = hashlib.sha256(open(path, 'rb').read()).hexdigest()
+        size = os.path.getsize(path)
+        lines.append(f'{name}\t1\t{size}\t{h}\t{DESCRIPTIONS.get(name, "")}')
+    with open(os.path.join(REPO, 'PACKAGES'), 'w') as f:
+        f.write('\n'.join(lines) + '\n')
+    with open(os.path.join(REPO, 'list.txt'), 'w') as f:
+        f.write('\n'.join(l.split('\t')[0] for l in lines) + '\n')
+    print(f'Indice: {len(lines)} paquetes en repo/PACKAGES y repo/list.txt')
+
+
+# ---------------------------------------------------------------- serve
+
+def server_running():
+    r = subprocess.run([engine(), 'ps', '-q', '-f', f'name=^{SERVER}$'],
+                       capture_output=True, text=True)
+    return bool(r.stdout.strip())
+
+
+def cmd_serve(args):
+    sub = args[0] if args else 'start'
+    cfg = load()
+    port = cfg['serve_port']
+    if sub == 'stop':
+        run([engine(), 'rm', '-f', SERVER], check=False, stdout=subprocess.DEVNULL)
+        print('Servidor detenido')
+        return
+    if sub == 'status':
+        print(f"Servidor Bali: {'corriendo' if server_running() else 'detenido'} (puerto {port})")
+        return
+    if not built_packages():
+        die('no hay paquetes en repo/. Usa ./mia packages build ... o ./mia packages import DIR')
+    write_index()
+    if server_running():
+        run([engine(), 'rm', '-f', SERVER], stdout=subprocess.DEVNULL)
+    build_image()
+    run([engine(), 'run', '-d', '--init', '--name', SERVER, '-p', f'{port}:8080',
+         '-v', f'{REPO}:/srv:ro,Z', IMAGE, 'python3', '-m', 'http.server', '8080', '-d', '/srv'],
+        stdout=subprocess.DEVNULL)
+    print(f'\nRepositorio Bali sirviendo repo/ en el puerto {port}:')
+    print(f'  equipo fisico: http://{lan_ip()}:{port}')
+    print(f'  QEMU:          http://10.0.2.2:{port}')
+    if cfg['bali_url']:
+        print(f"  configurado en los disquetes: {cfg['bali_url']}")
+    print('Detener: ./mia serve stop')
+
+
+# ---------------------------------------------------------------- write / run / status
+
+def cmd_write(args):
+    if len(args) != 2 or args[0] not in ('disk1', 'disk2'):
+        die('uso: mia write disk1|disk2 /dev/sdX')
+    img = os.path.join(OUT, 'floppy1-boot.img' if args[0] == 'disk1' else 'floppy2-rootfs.img')
+    if not os.path.exists(img):
+        die('primero ./mia build')
+    cmd = [os.path.join(ROOT, 'scripts', 'write-floppy.sh'), img, args[1]]
+    run(cmd if os.geteuid() == 0 else ['sudo'] + cmd)
+
+
+def cmd_run(_args):
+    cfg = load()
+    if cfg['target'] != 'qemu':
+        print('Aviso: los disquetes estan configurados para equipo fisico '
+              f"(Bali en {cfg['bali_url'] or '-'}). Para QEMU: ./mia setup con 'qemu' y ./mia build floppies")
+    env = dict(os.environ)
+    if cfg['nic'] == 'ne2k-pci':
+        env['NIC'] = 'ne2k_pci'
+    os.execve(os.path.join(ROOT, 'scripts', 'run-qemu.sh'),
+              [os.path.join(ROOT, 'scripts', 'run-qemu.sh'), OUT], env)
+
+
+def cmd_status(_args):
+    cfg = load()
+    print('Configuracion' + ('' if os.path.exists(CONF) else ' (sin ./mia setup, valores por defecto)') + ':')
+    for k in DEFAULTS:
+        print(f'  {k:12} {cfg[k]}')
+    print('Artefactos:')
+    for f in ('floppy1-boot.img', 'floppy2-rootfs.img', 'busybox'):
+        p = os.path.join(OUT, f)
+        print(f"  {f:20} {'listo' if os.path.exists(p) else '-'}")
+    print(f'  paquetes Bali        {len(built_packages())} en repo/')
+    if shutil.which('docker') or shutil.which('podman'):
+        cmd_serve(['status'])
+
+
+COMMANDS = {
+    'setup': cmd_setup, 'build': cmd_build, 'packages': cmd_packages, 'serve': cmd_serve,
+    'write': cmd_write, 'run': cmd_run, 'status': cmd_status,
+}
+
+if __name__ == '__main__':
+    if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
+        print(__doc__)
+        sys.exit(0 if len(sys.argv) < 2 else 1)
+    COMMANDS[sys.argv[1]](sys.argv[2:])

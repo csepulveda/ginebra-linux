@@ -1,0 +1,8 @@
+# Build environment for Ginebra Linux (matches the README requirement: Ubuntu 24.04)
+FROM docker.io/library/ubuntu:24.04
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential flex bison libncurses-dev libelf-dev libssl-dev bc kmod \
+      mtools dosfstools e2fsprogs libc6-i386 \
+      wget curl ca-certificates xz-utils bzip2 rsync file python3 \
+      pkg-config autoconf automake libtool autopoint gettext perl meson ninja-build git patch \
+    && rm -rf /var/lib/apt/lists/*

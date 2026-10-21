@@ -1,4 +1,4 @@
-::sysinit:/etc/init.d/rc
+::sysinit:/etc/init.d/rc2
 
 tty1::askfirst:-/bin/sh
 tty2::askfirst:-/bin/sh

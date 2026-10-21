@@ -4,6 +4,9 @@ filesystem/lib/*
 i486-linux-musl-cross/*
 repo/*.gz
 repo/build/*
-
+repo/PACKAGES
 
 .DS_Store
+dl/
+out/
+mia.conf
