@@ -1,4 +1,6 @@
 #!/bin/sh
+# Etapa 1 (PID 1): copia el sistema a RAM y arranca init desde la RAM.
+# El disquete se monta en solo lectura (ver 'ro' en syslinux.cfg) y queda libre para retirarlo.
 # Montar sistemas virtuales
 mount -t proc none /proc
 mount -t sysfs none /sys
@@ -23,4 +25,7 @@ mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t devtmpfs none /dev 2>/dev/null
 
-exec /bin/sh /etc/init.d/rc2
+# Soltar la consola del disquete y arrancar init desde la RAM
+# (asi nada queda usando el disquete y rc2 puede desmontarlo)
+exec </dev/console >/dev/console 2>&1
+exec /sbin/init

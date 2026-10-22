@@ -19,16 +19,15 @@ chmod 666 /dev/tty* 2>/dev/null
 umount /oldroot/sys 2>/dev/null
 umount /oldroot/proc 2>/dev/null
 umount /oldroot/dev 2>/dev/null
-umount /oldroot 2>/dev/null
-rmdir /oldroot 2>/dev/null
+if umount /oldroot 2>/dev/null || umount -l /oldroot 2>/dev/null; then
+    rmdir /oldroot 2>/dev/null
+    echo "Disquete liberado: ya puedes retirarlo." >> /tmp/boot.log
+else
+    echo "AVISO: no se pudo desmontar el disquete (sigue en solo lectura)." >> /tmp/boot.log
+fi
 
-# Load Network Card Module
-modprobe 8139too
-
-# Configure network
-ifconfig lo 127.0.0.1
-ifconfig eth0 192.168.100.99 netmask 255.255.255.0
-hostname ginebra
+# Red: driver segun el hardware y configuracion de /etc/ginebra.conf
+/etc/init.d/network >> /tmp/boot.log 2>&1
 
 #modules
 modprobe psmouse
@@ -39,6 +38,6 @@ export TERM=linux
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export DISPLAY=:0
 
-echo "Ginebra Linux running from RAM"
 clear
 cat /welcome
+cat /tmp/boot.log 2>/dev/null
